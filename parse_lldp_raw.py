@@ -185,42 +185,46 @@ def _extract_switch_name(tlvs: dict[int, list[bytes]]) -> str:
 def _extract_port(tlvs: dict[int, list[bytes]]) -> str:
     """
     Extract the remote switch port name.
-
-    Priority:
-        1. Port Description (type 4) — often contains the full interface
-           name such as "GigabitEthernet1/0/24" on Cisco switches.
-        2. Port ID (type 2) subtype 5 (interface name) or 7 (locally
-           assigned) — the standardized interface identifier.
-        3. Port ID any other string subtype — last resort.
-
-    MAC-address Port IDs are skipped because a MAC is not a useful
-    port label for a field technician.
+    Prefer shortened Port Description if valid,
+    otherwise fall back to Port ID.
     """
-    # Port Description (type 4)
-    descr_values = tlvs.get(_TLV_PORT_DESCR, [])
-    if descr_values:
-        descr = _decode_string(descr_values[0])
-        if descr:
-            return shorten_interface_name(descr)
 
-    # Port ID (type 2)
-    port_values = tlvs.get(_TLV_PORT_ID, [])
-    if not port_values:
-        return ""
+    port_descr = None
+    port_id = None
 
-    value   = port_values[0]
-    if len(value) < 2:
-        return ""
+    # --- Get Port Description (TLV 4) ---
+    if _TLV_PORT_DESCR in tlvs:
+        try:
+            raw_descr = _decode_string(tlvs[_TLV_PORT_DESCR][0])
+            shortened = shorten_interface_name(raw_descr)
 
-    subtype = value[0]
-    data    = value[1:]
+            # Only accept it if it actually shortened meaningfully
+            if shortened and len(shortened) < len(raw_descr):
+                port_descr = sanitize_display_string(shortened)
+        except Exception:
+            pass
 
-    # Skip MAC-based Port IDs — not useful on screen.
-    if subtype == _PORT_SUBTYPE_MAC:
-        return ""
+    # --- Get Port ID (TLV 2) ---
+    if _TLV_PORT_ID in tlvs:
+        try:
+            raw = tlvs[_TLV_PORT_ID][0]
+            subtype = raw[0]
+            value = raw[1:]
 
-    port = _decode_string(data)
-    return shorten_interface_name(port)
+            decoded = _decode_string(value)
+            port_id = sanitize_display_string(decoded)
+        except Exception:
+            pass
+
+    # --- Final decision ---
+    if port_descr:
+        return port_descr
+
+    if port_id:
+        return port_id
+
+    return ""
+
 
 
 def _extract_management_ip(tlvs: dict[int, list[bytes]]) -> str:
